@@ -1,13 +1,14 @@
 import math
-import gym
-from gym import spaces
-from gym.utils import seeding
+import gymnasium
+from gymnasium import Env, spaces
+from gymnasium.utils import seeding
 import numpy as np
 import puppersim
 import os
 import gin
 from pybullet_envs.minitaur.envs_v2 import env_loader
 import puppersim.data as pd
+from typing import Optional
 
 def create_pupper_env():
   CONFIG_DIR = puppersim.getPupperSimPath()
@@ -21,13 +22,18 @@ def create_pupper_env():
   return env
 
 
-class PupperGymEnv(gym.Env):
-  metadata = {'render.modes': ['human', 'rgb_array'], 'video.frames_per_second': 50}
+class PupperGymEnv(Env):
+  metadata = {
+    "render_modes": ["human", "ansi", "rgb_array"],
+    "render_fps": 50,
+  }
 
-  def __init__(self):
+  def __init__(self, render_mode: Optional[str] = None, render=False):
     self.env = create_pupper_env()
     self.observation_space = self.env.observation_space
     self.action_space = self.env.action_space
+    self._is_render = render
+    self.render_mode = render_mode
 
   #def _configure(self, display=None):
   #  self.display = display
@@ -40,15 +46,18 @@ class PupperGymEnv(gym.Env):
     return [seed]
 
   def step(self, action):
-    return self.env.step(action)
+    retval = self.env.step(action)
+    retval = retval + ({}, )
+    return retval
 
-  def reset(self):
-    return self.env.reset()
+  def reset(self, seed=None, options=None):
+    retval = self.env.reset()
+    return retval, {}
 
   def update_weights(self, weights):
     self.env.update_weights(weights)
 
-  def render(self, mode='human', close=False,  **kwargs):
+  def render(self, mode='rgb_array', close=False,  **kwargs):
     return self.env.render(mode)
 
   def configure(self, args):

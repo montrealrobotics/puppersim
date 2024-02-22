@@ -19,10 +19,8 @@ r"""An example that the Pupper stands.
 """
 from absl import app
 from absl import flags
-import os
 import time
 import gin
-import math
 import numpy as np
 import pickle
 from pybullet_envs.minitaur.envs_v2 import env_loader

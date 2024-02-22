@@ -19,7 +19,6 @@ Install [miniconda](https://docs.conda.io/en/latest/miniconda.html), then
 ```
 conda create --name rl_pupper python=3.7
 conda activate rl_pupper
-pip install ray arspb
 ```
 
 ## Getting the code ready

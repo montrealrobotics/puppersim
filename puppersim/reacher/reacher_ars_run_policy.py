@@ -6,7 +6,7 @@ python3 pupper_ars_run_policy.py --expert_policy_file=data/lin_policy_plus_best_
 
 """
 import numpy as np
-import gym
+import gymnasium as gym
 import time
 import pybullet_envs
 try:
@@ -19,6 +19,11 @@ import time
 import arspb.trained_policies as tp
 import os
 import random
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from cleanrl.ppo_continuous_action import Agent
+from cleanrl.ppo_continuous_action import make_env
 
 #temp hack to create an envs_v2 pupper env
 
@@ -31,6 +36,7 @@ from pybullet import COV_ENABLE_GUI
 import puppersim.data as pd
 import reacher_env
 from puppersim.reacher import reacher_kinematics
+
 
 def create_reacher_env(args):
   env = reacher_env.ReacherEnv(run_on_robot=args.run_on_robot, 
@@ -73,10 +79,21 @@ def main(argv):
     if not os.path.exists(args.expert_policy_file):
       args.expert_policy_file=tp.getDataPath()+"/"+args.envname+"/lin_policy_plus.npz"
   data = np.load(args.expert_policy_file, allow_pickle=True)
+  #
+  # print('create gym environment:', params["env_name"])
+  # env = create_reacher_env(args)#gym.make(params["env_name"])
 
-  print('create gym environment:', params["env_name"])
-  env = create_reacher_env(args)#gym.make(params["env_name"])
+  path = '/home/kirstyellis/pupper_ws/src/runs/ReacherEnv-v0__ppo_continuous_action__1__1704741618/ppo_continuous_action.cleanrl_model'
 
+  env_id = 'ReacherEnv-v0'
+  envs = gym.vector.SyncVectorEnv([make_env(env_id, 1, False, 'test', 0.99) for i in range(1)])
+  device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
+  model = Agent(envs).to(device)
+  model.load_state_dict(torch.load(path))
+  for param_tensor in model.state_dict():
+    print(param_tensor, "\t", model.state_dict()[param_tensor].size())
+  model.eval()
+  params = model.parameters()
 
   lst = data.files
   weights = data[lst[0]][0]
@@ -85,10 +102,10 @@ def main(argv):
   std = data[lst[0]][2]
   print("std=",std)
 
-  ob_dim = env.observation_space.shape[0]
-  ac_dim = env.action_space.shape[0]
-  ac_lb = env.action_space.low
-  ac_ub = env.action_space.high
+  ob_dim = envs.observation_space.shape[0]
+  ac_dim = envs.action_space.shape[0]
+  ac_lb = envs.action_space.low
+  ac_ub = envs.action_space.high
 
   policy_params={'type': params["policy_type"],
                    'ob_filter':params['filter'],
@@ -100,6 +117,7 @@ def main(argv):
   policy_params['weights'] = weights
   policy_params['observation_filter_mean'] = mu
   policy_params['observation_filter_std'] = std
+
   if params["policy_type"]=="nn":
     print("FullyConnectedNeuralNetworkPolicy")
     policy_sizes_string = params['policy_network_size_list'].split(',')
