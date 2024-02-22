@@ -27,6 +27,14 @@ git clone https://github.com/jietan/puppersim.git
 cd puppersim
 pip install -e .
 ```
+
+You will also need to use this version of pybullet:
+```bash
+git clone https://github.com/montrealrobotics/bullet3.git
+cd bullet3
+pip install -e .
+```
+
 Then to verify the installation, run
 ```bash
 python3 puppersim/pupper_example.py
@@ -51,7 +59,8 @@ You should see the PyBullet GUI pop up and see Pupper doing an exercise.
 ## Training
 From the outer puppersim folder run:
 ```bash
-python3 puppersim/pupper_ars_train.py --rollout_length=200
+python puppersim/pupper_train_ppo_cont_action.py --seed 1 --env-id PupperGymEnv-v0 
+--total-timesteps 5000 --save-model --capture_video
 ```
 Depending on your computer specs, each training iteration will take around 1 - 5 seconds.
 
@@ -80,12 +89,10 @@ Then add a `README.md` in the folder with a brief description of what you did, i
 </details>
 <br/>
 
-## Test an ARS policy
-You can visualize the policy during or after training with the following command. From the outer puppersim folder run:
-```
-python3 puppersim/pupper_ars_run_policy.py  --expert_policy_file  data/lin_policy_plus_latest.npz  --json_file data/params.json --render
-```
-If you specified non-default locations for the expert policy and json files when running the training command, you should specify the correct locations in this command.
+## Test a policy
+TODO
+
+
 ## Deployment
 ### Prerequisites
 <details>
