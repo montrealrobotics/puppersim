@@ -1,2 +1,11 @@
-pip3 install numpy==1.23.5
-stable baseliens 3
+setuptools==65.5.1
+pip==21
+wheel==0.38.0
+numpy
+stable-baselines3
+tyro
+tensorboard
+gym==0.21.0
+gymnasium
+protobuf==3.20.*
+moviepy

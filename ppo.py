@@ -2,6 +2,7 @@
 import os
 import random
 import time
+from collections import UserDict
 from dataclasses import dataclass
 from typing import Callable
 
@@ -15,6 +16,7 @@ import torch.optim as optim
 import tyro
 from gymnasium import Wrapper
 from gymnasium.utils.step_api_compatibility import convert_to_terminated_truncated_step_api
+
 from pybullet_envs.minitaur.envs_v2 import env_loader
 from torch.distributions.normal import Normal
 from torch.utils.tensorboard import SummaryWriter
@@ -153,21 +155,14 @@ def make_pupper_task():
 
 def make_env(env_id, idx, capture_video, run_name, gamma):
     def thunk():
+        env = make_pupper_task()
         if capture_video and idx == 0:
-            env = make_pupper_task()
-            #env = gym.make(env_id, render_mode="rgb_array")
             env = gym.wrappers.RecordVideo(env, f"videos/{run_name}")
-        else:
-            env = make_pupper_task()
-            #env = gym.make(env_id)
 
         env = gym.wrappers.FlattenObservation(env)  # deal with dm_control's Dict observation space
         env = gym.wrappers.RecordEpisodeStatistics(env)
         env = gym.wrappers.ClipAction(env)
         env = gym.wrappers.NormalizeObservation(env)
-        #env = gym.wrappers.TransformObservation(env, lambda obs: np.clip(obs, -10, 10))
-        #env = gym.wrappers.NormalizeReward(env, gamma=gamma)
-        #env = gym.wrappers.TransformReward(env, lambda reward: np.clip(reward, -10, 10))
         return env
 
     return thunk
@@ -212,11 +207,6 @@ class Agent(nn.Module):
 
 
 if __name__ == "__main__":
-    x = make_pupper_task()
-
-
-
-
     args = tyro.cli(Args)
     args.batch_size = int(args.num_envs * args.num_steps)
     args.minibatch_size = int(args.batch_size // args.num_minibatches)

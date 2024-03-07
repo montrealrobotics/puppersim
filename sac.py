@@ -4,7 +4,6 @@ import random
 import time
 from dataclasses import dataclass
 
-import gymnasium as gym
 import numpy as np
 import torch
 import torch.nn as nn
@@ -14,7 +13,9 @@ import tyro
 from stable_baselines3.common.buffers import ReplayBuffer
 from torch.utils.tensorboard import SummaryWriter
 
-from ppo import make_pupper_task
+#from ppo import make_pupper_task
+
+from puppersim_utils import make_vector_env, evaluate
 
 
 @dataclass
@@ -33,7 +34,7 @@ class Args:
     """the wandb's project name"""
     wandb_entity: str = None
     """the entity (team) of wandb's project"""
-    capture_video: bool = False
+    capture_video: bool = True
     """whether to capture videos of the agent performances (check out `videos` folder)"""
 
     # Algorithm specific arguments
@@ -65,22 +66,6 @@ class Args:
     """Entropy regularization coefficient."""
     autotune: bool = True
     """automatic tuning of the entropy coefficient"""
-
-
-def make_env(env_id, seed, idx, capture_video, run_name):
-    def thunk():
-        if capture_video and idx == 0:
-            #env = gym.make(env_id, render_mode="rgb_array")
-            env = make_pupper_task()
-            #env = gym.wrappers.RecordVideo(env, f"videos/{run_name}")
-        else:
-            env = make_pupper_task()
-            #env = gym.make(env_id)
-        env = gym.wrappers.RecordEpisodeStatistics(env)
-        env.action_space.seed(seed)
-        return env
-
-    return thunk
 
 
 # ALGO LOGIC: initialize agent here:
@@ -117,6 +102,10 @@ class Actor(nn.Module):
         self.register_buffer(
             "action_bias", torch.tensor((env.action_space.high + env.action_space.low) / 2.0, dtype=torch.float32)
         )
+
+    def to(self, device):
+        self.device = device
+        return super(Actor, self).to(device)
 
     def forward(self, x):
         x = F.relu(self.fc1(x))
@@ -182,8 +171,7 @@ poetry run pip install "stable_baselines3==2.0.0a1"
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
 
     # env setup
-    envs = gym.vector.SyncVectorEnv([make_env(args.env_id, args.seed, 0, args.capture_video, run_name)])
-    assert isinstance(envs.single_action_space, gym.spaces.Box), "only continuous action space is supported"
+    envs = make_vector_env(args.seed, False, None)
 
     max_action = float(envs.single_action_space.high[0])
 
@@ -298,6 +286,9 @@ poetry run pip install "stable_baselines3==2.0.0a1"
                     target_param.data.copy_(args.tau * param.data + (1 - args.tau) * target_param.data)
                 for param, target_param in zip(qf2.parameters(), qf2_target.parameters()):
                     target_param.data.copy_(args.tau * param.data + (1 - args.tau) * target_param.data)
+
+            if global_step % 1000:
+                evaluate(agent=actor, run_name=run_name, eval_episodes=5)
 
             if global_step % 100 == 0:
                 writer.add_scalar("losses/qf1_values", qf1_a_values.mean().item(), global_step)
