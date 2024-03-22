@@ -1,4 +1,5 @@
 # docs and experiment results can be found at https://docs.cleanrl.dev/rl-algorithms/sac/#sac_continuous_actionpy
+import functools
 import os
 import random
 import time
@@ -15,7 +16,8 @@ from torch.utils.tensorboard import SummaryWriter
 
 #from ppo import make_pupper_task
 
-from puppersim_utils import make_vector_env, evaluate
+from roble.puppergym import make_vector_env, evaluate
+from roble.thunk_sim2real_wrap import make_thunk
 
 
 @dataclass
@@ -97,10 +99,10 @@ class Actor(nn.Module):
         self.fc_logstd = nn.Linear(256, np.prod(env.single_action_space.shape))
         # action rescaling
         self.register_buffer(
-            "action_scale", torch.tensor((env.action_space.high - env.action_space.low) / 2.0, dtype=torch.float32)
+            "action_scale", torch.tensor((env.single_action_space.high - env.single_action_space.low) / 2.0, dtype=torch.float32)
         )
         self.register_buffer(
-            "action_bias", torch.tensor((env.action_space.high + env.action_space.low) / 2.0, dtype=torch.float32)
+            "action_bias", torch.tensor((env.single_action_space.high + env.single_action_space.low) / 2.0, dtype=torch.float32)
         )
 
     def to(self, device):
@@ -171,7 +173,10 @@ poetry run pip install "stable_baselines3==2.0.0a1"
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
 
     # env setup
-    envs = make_vector_env(args.seed, False, None)
+    NUM_ENVS = 16
+    sim2real_wrap = make_thunk(None)
+    make_vector_env = functools.partial(make_vector_env, sim2real_wrap=sim2real_wrap)
+    envs = make_vector_env(args.seed, False, None, NUM_ENVS)
 
     max_action = float(envs.single_action_space.high[0])
 
@@ -200,6 +205,7 @@ poetry run pip install "stable_baselines3==2.0.0a1"
         envs.single_observation_space,
         envs.single_action_space,
         device,
+        n_envs=NUM_ENVS,
         handle_timeout_termination=False,
     )
     start_time = time.time()
@@ -219,11 +225,20 @@ poetry run pip install "stable_baselines3==2.0.0a1"
 
         # TRY NOT TO MODIFY: record rewards for plotting purposes
         if "final_info" in infos:
+            R = []
+            L = []
             for info in infos["final_info"]:
-                print(f"global_step={global_step}, episodic_return={info['episode']['r']}")
-                writer.add_scalar("charts/episodic_return", info["episode"]["r"], global_step)
-                writer.add_scalar("charts/episodic_length", info["episode"]["l"], global_step)
-                break
+                if info is None:
+                    continue
+                else:
+                    R.append(info["episode"]["r"])
+                    L.append(info["episode"]["l"])
+
+            R = np.array(R).mean()
+            L = np.array(L).mean()
+            print(f"global_step={global_step}, episodic_return={R}")
+            writer.add_scalar("charts/episodic_return", R, global_step)
+            writer.add_scalar("charts/episodic_length", L, global_step)
 
         # TRY NOT TO MODIFY: save data to reply buffer; handle `final_observation`
         real_next_obs = next_obs.copy()
@@ -287,8 +302,9 @@ poetry run pip install "stable_baselines3==2.0.0a1"
                 for param, target_param in zip(qf2.parameters(), qf2_target.parameters()):
                     target_param.data.copy_(args.tau * param.data + (1 - args.tau) * target_param.data)
 
-            if global_step % 1000:
-                evaluate(agent=actor, run_name=run_name, eval_episodes=5)
+            if (global_step % 100_000) == 0:
+                returns = evaluate(agent=actor, make_env=make_vector_env, video_save_path=f"videos/{run_name}/global_step_{global_step}", eval_episodes=1)
+                print(returns)
 
             if global_step % 100 == 0:
                 writer.add_scalar("losses/qf1_values", qf1_a_values.mean().item(), global_step)

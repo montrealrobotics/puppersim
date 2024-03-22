@@ -3,6 +3,7 @@ import os
 import gin
 import gymnasium
 import gymnasium as gym
+import numpy as np
 import torch
 from gymnasium import Wrapper
 from gymnasium.utils.step_api_compatibility import convert_to_terminated_truncated_step_api
@@ -13,9 +14,11 @@ from tqdm import tqdm
 import puppersim
 
 
+TIMELIMIT = 1_000
+
 def make_pupper_task():
     CONFIG_DIR = puppersim.getPupperSimPath()
-    _CONFIG_FILE = os.path.join(CONFIG_DIR, "config", "pupper_pmtg.gin")
+    _CONFIG_FILE = os.path.join(CONFIG_DIR, "../puppersim/config", "pupper_pmtg.gin")
     #  _NUM_STEPS = 10000
     #  _ENV_RANDOM_SEED = 2
 
@@ -47,11 +50,11 @@ def make_pupper_task():
     return env
 
 
-def get_env_thunk(seed, idx, capture_video, video_save_path, timelimit=1000):
+def get_env_thunk(seed, sim2real_wrap, idx, capture_video, video_save_path, timelimit=TIMELIMIT):
     def thunk():
-        env = make_pupper_task()
+        env = make_pupper_task() # replace with gym.make todo @ guillaume et jaydan
 
-        env = TimeLimit(env, timelimit)
+        env = TimeLimit(env, TIMELIMIT)
 
         if capture_video and idx == 0:
             env = gym.wrappers.RecordVideo(env, f"videos/{video_save_path}")
@@ -59,41 +62,56 @@ def get_env_thunk(seed, idx, capture_video, video_save_path, timelimit=1000):
         env = gym.wrappers.FlattenObservation(env)  # deal with dm_control's Dict observation space
         env = gym.wrappers.RecordEpisodeStatistics(env)
         env = gym.wrappers.ClipAction(env)
-        env = gym.wrappers.NormalizeObservation(env)
+        #env = gym.wrappers.NormalizeObservation(env)
+
+        env = sim2real_wrap(env)
+
         env.action_space.seed(seed)
         return env
 
     return thunk
 
+def _identity(env):
+    return env
 
-def make_vector_env(seed, capture_video, video_save_path):
-    envs = gym.vector.SyncVectorEnv([get_env_thunk(seed, 0, capture_video, video_save_path)])
+def make_vector_env(seed, capture_video, video_save_path, num_vector=10, sim2real_wrap=_identity):
+    envlist = []
+    for i in range(num_vector):
+        envlist.append(get_env_thunk(seed, sim2real_wrap, i, capture_video, video_save_path))
+    envs = gym.vector.AsyncVectorEnv(envlist)
     assert isinstance(envs.single_action_space, gym.spaces.Box), "only continuous action space is supported"
     return envs
 
 
 def evaluate(
         agent,
-        run_name: str,
+        make_env,
+        video_save_path,
         eval_episodes: int=5,
-        timilimit=1000
+        timelimit=1000
 ):
-    envs = make_vector_env(0, True, run_name)
+    print("EVALUATING")
+    envs = make_env(0, True, video_save_path)
 
     with torch.no_grad():
         obs, _ = envs.reset()
         episodic_returns = []
+        episodic_lengths = []
         while len(episodic_returns) < eval_episodes:
-            for _ in tqdm(range(timilimit+1)):
+            for timestep in tqdm(range(TIMELIMIT + 1)):
                 actions = agent.get_action(torch.Tensor(obs).to(agent.device))[0]
-                next_obs, _, _, _, infos = envs.step(actions.cpu().numpy())
+                next_obs, rewards, terminated, truncated, infos = envs.step(actions.cpu().numpy())
                 if "final_info" in infos:
                     for info in infos["final_info"]:
+                        if info is None:
+                            continue
                         if "episode" not in info:
                             continue
                         print(f"eval_episode={len(episodic_returns)}, episodic_return={info['episode']['r']}")
                         episodic_returns += [info["episode"]["r"]]
-                    break
+                        episodic_lengths += [info["episode"]["l"]]
             obs = next_obs
 
-    return episodic_returns
+    episodic_returns = [float(i) for i in episodic_returns]
+    episodic_lengths = [float(i) for i in episodic_lengths]
+    return np.array(episodic_returns).mean(), np.array(episodic_lengths).mean()

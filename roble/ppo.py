@@ -1,60 +1,22 @@
 # docs and experiment results can be found at https://docs.cleanrl.dev/rl-algorithms/ppo/#ppo_continuous_actionpy
+import functools
 import os
 import random
 import time
-from collections import UserDict
 from dataclasses import dataclass
-from typing import Callable
 
-import gin
 import gymnasium as gym
-import gymnasium.spaces
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import tyro
-from gymnasium import Wrapper
-from gymnasium.utils.step_api_compatibility import convert_to_terminated_truncated_step_api
-
-from pybullet_envs.minitaur.envs_v2 import env_loader
 from torch.distributions.normal import Normal
 from torch.utils.tensorboard import SummaryWriter
 
-import puppersim
+from roble.puppergym import make_vector_env, evaluate
+from roble.thunk_sim2real_wrap import make_thunk
 
-
-
-def evaluate(
-    model_path: str,
-    make_env: Callable,
-    env_id: str,
-    eval_episodes: int,
-    run_name: str,
-    Model: torch.nn.Module,
-    device: torch.device = torch.device("cpu"),
-    capture_video: bool = True,
-    gamma: float = 0.99,
-):
-    envs = gym.vector.SyncVectorEnv([make_env(env_id, 0, capture_video, run_name, gamma)])
-    agent = Model(envs).to(device)
-    agent.load_state_dict(torch.load(model_path, map_location=device))
-    agent.eval()
-
-    obs, _ = envs.reset()
-    episodic_returns = []
-    while len(episodic_returns) < eval_episodes:
-        actions, _, _, _ = agent.get_action_and_value(torch.Tensor(obs).to(device))
-        next_obs, _, _, _, infos = envs.step(actions.cpu().numpy())
-        if "final_info" in infos:
-            for info in infos["final_info"]:
-                if "episode" not in info:
-                    continue
-                print(f"eval_episode={len(episodic_returns)}, episodic_return={info['episode']['r']}")
-                episodic_returns += [info["episode"]["r"]]
-        obs = next_obs
-
-    return episodic_returns
 
 @dataclass
 class Args:
@@ -84,11 +46,11 @@ class Args:
     # Algorithm specific arguments
     env_id: str = "HalfCheetah-v4"
     """the id of the environment"""
-    total_timesteps: int = 10000000
+    total_timesteps: int = 10_000_000
     """total timesteps of the experiments"""
     learning_rate: float = 3e-4
     """the learning rate of the optimizer"""
-    num_envs: int = 16
+    num_envs: int = 32
     """the number of parallel game environments"""
     num_steps: int = 2048
     """the number of steps to run in each environment per policy rollout"""
@@ -125,47 +87,6 @@ class Args:
     num_iterations: int = 0
     """the number of iterations (computed in runtime)"""
 
-def make_pupper_task():
-    CONFIG_DIR = puppersim.getPupperSimPath()
-    _CONFIG_FILE = os.path.join(CONFIG_DIR, "config", "pupper_pmtg.gin")
-    #  _NUM_STEPS = 10000
-    #  _ENV_RANDOM_SEED = 2
-
-    import puppersim.data as pd
-    gin.bind_parameter("scene_base.SceneBase.data_root", pd.getDataPath() + "/")
-    gin.parse_config_file(_CONFIG_FILE)
-    env = env_loader.load()
-
-    class GymnasiumWrapper(Wrapper):
-        def __init__(self, env):
-            super().__init__(env)
-            self.observation_space = gymnasium.spaces.Box(low=env.observation_space.low, high=env.observation_space.high)
-            self.action_space = gymnasium.spaces.Box(low=env.action_space.low, high=env.action_space.high)
-
-        def reset(self, **kwargs):
-            return self.env.reset(), {}
-
-        def step(self, action):
-            return convert_to_terminated_truncated_step_api(self.env.step(action))
-
-
-    env = GymnasiumWrapper(env)
-
-    return env
-
-def make_env(env_id, idx, capture_video, run_name, gamma):
-    def thunk():
-        env = make_pupper_task()
-        if capture_video and idx == 0:
-            env = gym.wrappers.RecordVideo(env, f"videos/{run_name}")
-
-        env = gym.wrappers.FlattenObservation(env)  # deal with dm_control's Dict observation space
-        env = gym.wrappers.RecordEpisodeStatistics(env)
-        env = gym.wrappers.ClipAction(env)
-        env = gym.wrappers.NormalizeObservation(env)
-        return env
-
-    return thunk
 
 
 def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
@@ -205,6 +126,12 @@ class Agent(nn.Module):
             action = probs.sample()
         return action, probs.log_prob(action).sum(1), probs.entropy().sum(1), self.critic(x)
 
+    def get_action(self, x):
+        return self.get_action_and_value(x, None)[0]
+
+    def to(self, device):
+        self.device = device
+        return super(Agent, self).to(device)
 
 if __name__ == "__main__":
     args = tyro.cli(Args)
@@ -239,9 +166,11 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
 
     # env setup
-    envs = gym.vector.SyncVectorEnv(
-        [make_env(args.env_id, i, args.capture_video, run_name, args.gamma) for i in range(args.num_envs)]
-    )
+
+    NUM_ENVS = args.num_envs
+    sim2real_wrap = make_thunk(None)
+    make_vector_env = functools.partial(make_vector_env, sim2real_wrap=sim2real_wrap)
+    envs = make_vector_env(args.seed, False, None, NUM_ENVS)
     assert isinstance(envs.single_action_space, gym.spaces.Box), "only continuous action space is supported"
 
     agent = Agent(envs).to(device)
@@ -256,6 +185,7 @@ if __name__ == "__main__":
     values = torch.zeros((args.num_steps, args.num_envs)).to(device)
 
     # TRY NOT TO MODIFY: start the game
+    SINGLE_global_step = 0
     global_step = 0
     start_time = time.time()
     next_obs, _ = envs.reset(seed=args.seed)
@@ -271,8 +201,15 @@ if __name__ == "__main__":
 
         for step in range(0, args.num_steps):
             global_step += args.num_envs
+            SINGLE_global_step += 1
             obs[step] = next_obs
             dones[step] = next_done
+
+            EVAL_FREQ = 100_000
+            if SINGLE_global_step > 1 and ((SINGLE_global_step % (EVAL_FREQ // args.num_envs)) == 0):
+                returns = evaluate(agent=agent, make_env=make_vector_env,
+                                   video_save_path=f"videos/{run_name}/global_step_{global_step}", eval_episodes=1)
+                print(returns)
 
             # ALGO LOGIC: action logic
             with torch.no_grad():
@@ -369,8 +306,10 @@ if __name__ == "__main__":
                 nn.utils.clip_grad_norm_(agent.parameters(), args.max_grad_norm)
                 optimizer.step()
 
+
             if args.target_kl is not None and approx_kl > args.target_kl:
                 break
+
 
         y_pred, y_true = b_values.cpu().numpy(), b_returns.cpu().numpy()
         var_y = np.var(y_true)
@@ -393,18 +332,8 @@ if __name__ == "__main__":
         torch.save(agent.state_dict(), model_path)
         print(f"model saved to {model_path}")
 
-        episodic_returns = evaluate(
-            model_path,
-            make_env,
-            args.env_id,
-            eval_episodes=10,
-            run_name=f"{run_name}-eval",
-            Model=Agent,
-            device=device,
-            gamma=args.gamma,
-        )
-        for idx, episodic_return in enumerate(episodic_returns):
-            writer.add_scalar("eval/episodic_return", episodic_return, idx)
+
+
 
     envs.close()
     writer.close()
