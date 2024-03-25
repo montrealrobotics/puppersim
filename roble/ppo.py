@@ -6,6 +6,7 @@ import time
 from dataclasses import dataclass
 
 import gymnasium as gym
+import hydra
 import numpy as np
 import torch
 import torch.nn as nn
@@ -133,7 +134,7 @@ class Agent(nn.Module):
         self.device = device
         return super(Agent, self).to(device)
 
-if __name__ == "__main__":
+def train(cfg):
     args = tyro.cli(Args)
     args.batch_size = int(args.num_envs * args.num_steps)
     args.minibatch_size = int(args.batch_size // args.num_minibatches)
@@ -337,3 +338,10 @@ if __name__ == "__main__":
 
     envs.close()
     writer.close()
+
+@hydra.main(version_base=None, config_path="config", config_name="conf")
+def main(cfg):
+    train(cfg)
+
+if __name__ == "__main__":
+    main()
