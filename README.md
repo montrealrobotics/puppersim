@@ -23,13 +23,16 @@ conda activate rl_pupper
 
 ## Getting the code ready
 ```bash
-git clone --recurse-submodulesh https://github.com/jietan/puppersim.git
+mkdir -p ~/pupper_ws/src
+cd ~/pupper_ws/src
+git clone --recurse-submodules git@github.com:montrealrobotics/puppersim.git
 cd puppersim
 pip install -e .
 ```
 
 You will also need to use this version of pybullet:
 ```bash
+cd ~/pupper_ws/src
 git clone https://github.com/montrealrobotics/bullet3.git
 cd bullet3
 pip install -e .
