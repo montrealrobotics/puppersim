@@ -23,7 +23,7 @@ conda activate rl_pupper
 
 ## Getting the code ready
 ```bash
-git clone https://github.com/jietan/puppersim.git
+git clone --recurse-submodulesh https://github.com/jietan/puppersim.git
 cd puppersim
 pip install -e .
 ```

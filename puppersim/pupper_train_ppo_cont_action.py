@@ -329,7 +329,7 @@ if __name__ == "__main__":
         state_dict = agent.state_dict()
         torch.save(state_dict, model_path)
         print(f"model saved to {model_path}")
-        from cleanrl_utils.evals.ppo_eval import evaluate
+        from cleanrl.cleanrl_utils.evals.ppo_eval import evaluate
 
         episodic_returns = evaluate(
             model_path,
@@ -352,4 +352,5 @@ if __name__ == "__main__":
             repo_id = f"{args.hf_entity}/{repo_name}" if args.hf_entity else repo_name
             push_to_hub(args, episodic_returns, repo_id, "PPO", f"runs/{run_name}", f"videos/{run_name}-eval")
 
+    envs.close()
     writer.close()
