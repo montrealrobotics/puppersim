@@ -38,12 +38,16 @@ setup(
     install_requires=[
         "pybullet",
         "attrs",
-        "gym",
+        "gym==0.21.0",
         "numpy",
         "absl-py",
         "gin-config",
         "scipy",
         "pyserial",
+        "protobuf==3.20.0",
+        "importlib-metadata==4.13.0",
+        "packaging",
+        "six",
         "pupper_hardware_interface @ git+https://github.com/stanfordroboticsclub/Pupper-V2-Interface.git",
     ],
     classifiers=[
